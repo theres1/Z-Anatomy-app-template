@@ -1545,3 +1545,7 @@ def unregister():
     bpy.app.handlers.load_post.remove(z_anatomy_load_post)
     bpy.msgbus.clear_by_owner(owner)
     bpy.types.SpaceView3D.draw_handler_remove(font_info["handler"], 'WINDOW')
+
+
+if __name__ == "__main__":
+    register()
