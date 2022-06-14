@@ -1227,13 +1227,22 @@ class ZAnatomyProps(bpy.types.PropertyGroup):
     comic_shader: bpy.props.BoolProperty(default=False, name="Comic Shader", update=comic_shader_func)
 
     def background_color_func(self, context):
-        if self.background_color == "WHITE":
-            bpy.data.worlds["WORLD BACKGROUND"].node_tree.nodes["Background"].inputs[0].default_value = (1,1,1,0)
-            context.scene.render.film_transparent = False
-        elif self.background_color == "GREY":
+        if self.background_color == "GREY":
+            for obj in [o for o in bpy.data.objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
+                obj[f'background'] = 0
+                obj.update_tag(refresh={'OBJECT'})
             bpy.data.worlds["WORLD BACKGROUND"].node_tree.nodes["Background"].inputs[0].default_value = (0.029556820169091225,0.029556820169091225,0.029556820169091225,0)
             context.scene.render.film_transparent = False
+        elif self.background_color == "WHITE":
+            for obj in [o for o in bpy.data.objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
+                obj[f'background'] = 1
+                obj.update_tag(refresh={'OBJECT'})
+            bpy.data.worlds["WORLD BACKGROUND"].node_tree.nodes["Background"].inputs[0].default_value = (1,1,1,0)
+            context.scene.render.film_transparent = False
         elif self.background_color == "TRANSPARENT":
+            for obj in [o for o in bpy.data.objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
+                obj[f'background'] = 2
+                obj.update_tag(refresh={'OBJECT'})
             context.scene.render.film_transparent = True
 
     background_color: bpy.props.EnumProperty(items=[
@@ -1246,14 +1255,14 @@ class ZAnatomyProps(bpy.types.PropertyGroup):
         update=background_color_func)
     
     def theme_func(self, context):
-        theme_dirs = [a for a in bpy.utils.app_template_paths()]
-        for dir in theme_dirs:
+        for dir in bpy.utils.app_template_paths():
             theme_dir = os.path.join(dir, 'Z-Anatomy')
             if os.path.isdir(theme_dir):
                 break
 
-        import sys
+        # import sys
         # dir_path = os.path.abspath(os.path.join(sys.executable, '..', '..', '..', 'scripts', 'presets', 'interface_theme'))
+        # theme_dir = os.path.dirname(__file__) # this can't be used if the script is to be used in a portable version's startup file
 
         if self.theme == "DARK":
             theme = "Anatomy_Dark.xml"
