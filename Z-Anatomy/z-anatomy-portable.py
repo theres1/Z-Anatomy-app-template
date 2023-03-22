@@ -1,5 +1,3 @@
-import bpy, os
-
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
@@ -12,17 +10,29 @@ import bpy, os
 #
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
+bl_info = {
+    "name" : "Z-Anatomy",
+    "author" : "Marcin Zieliński",
+    "description": "Shows all objects that contains 'always_front' front faced and 'always_show' are never hidden in viewport. Makes hiding objects inheritable.",
+    "blender" : (2, 80, 0),
+    "version" : (0, 0, 1),
+    "location" : "",
+    "warning" : "",
+    "category" : "Interface"
+}
 
+from typing import NewType
 import bpy
 from mathutils import Vector
 import mathutils
 import requests, json
 import urllib.parse
 import os.path
+from pathlib import Path
 from bpy_extras.object_utils import object_data_add
 import re
 
-label_elements = {"-txt", ".t", ".j", ".s"}
+label_elements = {"-txt", ".t", ".j"}
 
 def family_all(object):
     ''' Object + Grand children without ancestors '''
@@ -146,7 +156,7 @@ class OBJECT_OT_hide_view_clear_wrapper(bpy.types.Operator):
         else:
             bpy.ops.object.hide_view_clear(select=self.select)
         
-        for ob in (o for o in bpy.context.visible_objects if o.name.endswith((".t", ".s")) and o != context.object):
+        for ob in (o for o in bpy.context.visible_objects if ".t" in o.name and o != context.object):
             if not ob.parent == context.object:
                 ob.hide_set(True)
                 for child in ob.children:
@@ -165,7 +175,182 @@ def get_user_keymap_item(keymap_name, keymap_item_idname, multiple_entries=False
     if multiple_entries:
         return km, [i[1] for i in km.keymap_items.items() if i[0] == keymap_item_idname]
     else:
-        return km, km.keymap_items.get(keymap_item_idname)  
+        return km, km.keymap_items.get(keymap_item_idname)
+
+def register_keymaps():
+    kc = bpy.context.window_manager.keyconfigs
+    areas = 'Window', 'Text', 'Object Mode', '3D View'
+
+    if not all(i in kc.active.keymaps for i in areas):
+        bpy.app.timers.register(register_keymaps, first_interval=0.1)
+    else:
+        # can now proceed with checking default kmis
+        wm = bpy.context.window_manager
+        addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
+
+        ###########
+        # H / SHIFT+H / CTRL+SHIFT+H
+        ###########
+        try:
+            km, kmis =  get_user_keymap_item('Object Mode', 'object.hide_view_set', multiple_entries=True)
+            for default_kmi in kmis:
+                addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_wrapper.bl_idname, default_kmi.type, default_kmi.value)
+                addon_kmi.map_type = default_kmi.map_type
+                if hasattr(addon_kmi, 'repeat'):
+                    addon_kmi.repeat = default_kmi.repeat
+                addon_kmi.any = default_kmi.any
+                addon_kmi.shift = default_kmi.shift
+                addon_kmi.ctrl = default_kmi.ctrl
+                addon_kmi.alt = default_kmi.alt
+                addon_kmi.oskey = default_kmi.oskey
+                addon_kmi.key_modifier = default_kmi.key_modifier
+                
+                # addon_kmi.properties.unselected = default_kmi.properties.unselected
+                for prop in default_kmi.properties.__dir__():
+                    if not (prop.startswith('_') or prop in {'bl_rna', 'rna_type'}):
+                        setattr(addon_kmi.properties, prop, getattr(default_kmi.properties, prop))
+                
+                addon_kmi.properties.unselected_in_layer = False
+
+                addon_keymaps.append((addon_km, addon_kmi))
+            
+            # CTRL+SHIFT+H for hide unselected from active object's layer (main collection)
+            addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_wrapper.bl_idname, kmis[0].type, kmis[0].value)
+            addon_kmi.map_type = "KEYBOARD"
+            if hasattr(addon_kmi, 'repeat'):
+                addon_kmi.repeat = False
+            addon_kmi.any = False
+            addon_kmi.shift = True
+            addon_kmi.ctrl = True
+            addon_kmi.alt = False
+            addon_kmi.oskey = False
+            addon_kmi.key_modifier = "NONE"
+            addon_kmi.properties.unselected = True
+            addon_kmi.properties.unselected_in_layer = True
+            addon_keymaps.append((addon_km, addon_kmi))
+            
+            ###########
+            # ALT+H
+            ###########
+
+            km, kmis =  get_user_keymap_item('Object Mode', 'object.hide_view_clear', multiple_entries=True)
+            for default_kmi in kmis:
+                addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_view_clear_wrapper.bl_idname, default_kmi.type, default_kmi.value)
+                addon_kmi.map_type = default_kmi.map_type
+                if hasattr(addon_kmi, 'repeat'):
+                    addon_kmi.repeat = default_kmi.repeat
+                addon_kmi.any = default_kmi.any
+                addon_kmi.shift = default_kmi.shift
+                addon_kmi.ctrl = default_kmi.ctrl
+                addon_kmi.alt = default_kmi.alt
+                addon_kmi.oskey = default_kmi.oskey
+                addon_kmi.key_modifier = default_kmi.key_modifier
+                
+                for prop in default_kmi.properties.__dir__():
+                    if not (prop.startswith('_') or prop in {'bl_rna', 'rna_type'}):
+                        setattr(addon_kmi.properties, prop, getattr(default_kmi.properties, prop))
+
+                addon_kmi.properties.active_layer = False
+
+
+                addon_keymaps.append((addon_km, addon_kmi))
+
+            ###########
+            # CTRL+SHIFT+ALT+H
+            ###########
+            addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_view_clear_wrapper.bl_idname, default_kmi.type, default_kmi.value)
+            addon_kmi.map_type = "KEYBOARD"
+            if hasattr(addon_kmi, 'repeat'):
+                addon_kmi.repeat = False
+            addon_kmi.any = False
+            addon_kmi.shift = True
+            addon_kmi.ctrl = False
+            addon_kmi.alt = True
+            addon_kmi.oskey = False
+            addon_kmi.key_modifier = "NONE"
+            addon_kmi.properties.active_layer = True
+            addon_keymaps.append((addon_km, addon_kmi))
+
+
+            
+            ###########
+            # Local view with lights
+            ###########
+            km, kmis =  get_user_keymap_item('3D View', 'view3d.localview', multiple_entries=True)
+            for default_kmi in kmis:
+                addon_kmi = addon_km.keymap_items.new(OBJECT_OT_local_view_wrapper.bl_idname, default_kmi.type, default_kmi.value)
+                addon_kmi.map_type = default_kmi.map_type
+                addon_kmi.repeat = default_kmi.repeat
+                addon_kmi.any = default_kmi.any
+                addon_kmi.shift = default_kmi.shift
+                addon_kmi.ctrl = default_kmi.ctrl
+                addon_kmi.alt = default_kmi.alt
+                addon_kmi.oskey = default_kmi.oskey
+                addon_kmi.key_modifier = default_kmi.key_modifier
+                
+                for prop in default_kmi.properties.__dir__():
+                    if not (prop.startswith('_') or prop in {'bl_rna', 'rna_type'}):
+                        setattr(addon_kmi.properties, prop, getattr(default_kmi.properties, prop))
+
+                addon_keymaps.append((addon_km, addon_kmi))
+
+
+
+            ###########
+            # Add Label
+            ###########
+            addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
+            kmi = addon_km.keymap_items.new(OBJECT_OT_make_label.bl_idname, 'FIVE', 'PRESS', shift=True, ctrl=True, alt=False)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+
+            addon_km = wm.keyconfigs.addon.keymaps.new(name='Mesh', space_type='EMPTY')
+            kmi = addon_km.keymap_items.new(OBJECT_OT_make_label.bl_idname, 'FIVE', 'PRESS', shift=True, ctrl=True, alt=False)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+            ###########
+            # Label transform to delta
+            ###########
+            addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
+            kmi = addon_km.keymap_items.new(OBJECT_OT_label_delta.bl_idname, 'FIVE', 'PRESS', shift=True, ctrl=True, alt=True)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+            ###########
+            # Change Label
+            ###########
+            addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
+            kmi = addon_km.keymap_items.new(OBJECT_OT_change_label_wrapper.bl_idname, 'F2', 'PRESS', shift=False, ctrl=False, alt=False)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+
+            
+
+            ###########
+            # Download Wiki Texts
+            ###########
+            kmi = addon_km.keymap_items.new(TEXT_OT_wiki_download.bl_idname, 'ZERO', 'PRESS', shift=True, ctrl=True, alt=False)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+            
+            ###########
+            # Key Color
+            ###########
+            kmi = addon_km.keymap_items.new(OBJECT_OT_key_color.bl_idname, 'Z', 'PRESS', shift=True, ctrl=False, alt=True)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+
+            ###########
+            # Select Hierarchy
+            ###########
+            kmi = addon_km.keymap_items.new(OBJECT_OT_select_parent_children.bl_idname, 'DOWN_ARROW', 'PRESS', shift=False, ctrl=False, alt=False)     
+            kmi.active = True
+            addon_keymaps.append((km, kmi))
+        except Exception as e:
+            print("Exception during keystroke registering... Trying again.", e)
+            bpy.app.timers.register(register_keymaps, first_interval=0.1)
+        
+        
+
 
 addon_keymaps = []
 def add_shortkeys():
@@ -190,7 +375,7 @@ class OBJECT_OT_label_delta(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'OBJECT' and context.object is not None and context.object.name.endswith(('.t', '.s'))
+        return context.mode == 'OBJECT' and context.object is not None and context.object.name.endswith('.t')
     
     def execute(self, context):
         label = context.object
@@ -248,7 +433,7 @@ class OBJECT_OT_change_label_wrapper(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.mode in {'OBJECT'} and context.object is not None and context.object.name.endswith((".t", ".s"))
+        return context.mode in {'OBJECT'} and context.object is not None and ".t" in context.object.name
     
     def execute(self, context):
         font_object = context.object
@@ -341,7 +526,7 @@ for col in bpy.data.collections:
     col['English'] = col.name
 '''
 def clean_name(name):
-    for ending in ('.r', '.l', '.t', '.s', '.l.s', '.r.s', '.st', '.r.t', '.l.t', '.g', '.j', ''):
+    for ending in ('.r', '.l', '.t', '.st', '.r.t', '.l.t', '.g', '.j', ''):
         if ending == '':
             return name, ending
         elif name.endswith(ending):
@@ -353,11 +538,6 @@ fonts = {
     'Français': 'Bfont',
     'Español': 'Bfont',
     'Portugues': 'Bfont',
-    'Nederlands': 'Bfont',
-    'Deutsch': 'Bfont',
-    'Polski': 'Bfont',
-    '中國人': 'YuMincho-Regular',
-    
 }
 
 def first_n_bytes(string, n=63):
@@ -383,10 +563,6 @@ class OBJECT_OT_translate_atlas(bpy.types.Operator):
         ('Français', 'Français', '', 2),
         ('Español', 'Español', '', 3),
         ('Portugues', 'Portugues', '', 4),
-        ('Nederlands', 'Nederlands', '', 5),
-        ('Deutsch', 'Deutsch', '', 6),
-        ('Polski', 'Polski', '', 7),
-        ('中國人', '中國人', '', 8),
         ],
         default='English',
         name="Language")
@@ -737,7 +913,7 @@ def z_anatomy_load_post(scene=None):
 
                 # for obj in bpy.data.objects:
                 for obj in bpy.context.visible_objects:
-                    if obj.name.endswith(('.t', '.s', '...')):
+                    if '.t' in obj.name or obj.name.endswith('...'):
                         if obj.rotation_quaternion != viewport_orientation:
                             if obj.rotation_mode != 'QUATERNION':
                                 obj.rotation_mode = 'QUATERNION'
@@ -866,7 +1042,7 @@ def msgbus_callback(*args):
     # only label of visible object ought to be visible
 
     # do nothing if label is selected
-    if active_object.name.endswith((".t", ".s", ".st")):
+    if ".t" in active_object.name or ".st" in active_object.name:
         return
 
     for child in family(active_object):
@@ -892,8 +1068,8 @@ def msgbus_callback(*args):
             for child in (c for c in bpy.context.scene.objects if c.parent == ob and not c.visible_get() and c.name.endswith('.j')):
                 child.hide_set(False)
 
-    for ob in (o for o in bpy.context.visible_objects if o.name.endswith((".t", ".s"))):
-        print(ob, ob.parent, active_object)
+
+    for ob in (o for o in bpy.context.visible_objects if ".t" in o.name):
         if not ob.parent == active_object:
             ob.hide_set(True)
             for child in ob.children:
@@ -1052,7 +1228,7 @@ class ZANATOMY_PT_Key_Color(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         
-        if '.Muscular system' in bpy.data.collections:
+        if '4: Muscular system' in bpy.data.collections:
             layout.prop(context.scene.zanatomy, "key_color")
 
 import os
@@ -1206,7 +1382,7 @@ class OBJECT_OT_key_color(bpy.types.Operator):
 class ZAnatomyProps(bpy.types.PropertyGroup):
     enable_group_labels: bpy.props.BoolProperty(default=True, name="Enable Group Labels", update=lambda self, context: label_group_checkbox_update())
     def key_color_func(self, context):
-        if '.Muscular system' in bpy.data.collections:
+        if '4: Muscular system' in bpy.data.collections:
             var = self.key_color
             for ob in [c for col in bpy.data.collections for c in col.all_objects if c.type == 'MESH' and 'key_color' in c]:
                 ob['key_color'] = var
@@ -1253,34 +1429,28 @@ class ZAnatomyProps(bpy.types.PropertyGroup):
         default='GREY',
         name="Background",
         update=background_color_func)
-    
+        
     def theme_func(self, context):
-        for dir in bpy.utils.app_template_paths():
-            theme_dir = os.path.join(dir, 'Z-Anatomy')
-            if os.path.isdir(theme_dir):
-                break
-
-        # import sys
-        # dir_path = os.path.abspath(os.path.join(sys.executable, '..', '..', '..', 'scripts', 'presets', 'interface_theme'))
-        # theme_dir = os.path.dirname(__file__) # this can't be used if the script is to be used in a portable version's startup file
+        import sys
+        dir_path = os.path.abspath(os.path.join(sys.executable, '..', '..', '..', 'scripts', 'presets', 'interface_theme'))
 
         if self.theme == "DARK":
             theme = "Anatomy_Dark.xml"
 
-            for obj in [o for o in bpy.data.objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
+            for obj in [o for o in context.selected_objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
                 obj[f'theme'] = 0
                 obj.update_tag(refresh={'OBJECT'})
         else:
             theme = "Anatomy_Bright.xml"
 
-            for obj in [o for o in bpy.data.objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
+            for obj in [o for o in context.selected_objects if re.search(r"(\.st)|(\.t)|(\.g)$", o.name)]:
                 obj[f'theme'] = 1
                 obj.update_tag(refresh={'OBJECT'})
         
         context.area.tag_redraw()
 
         bpy.ops.script.execute_preset(
-            filepath=os.path.join(theme_dir, theme),
+            filepath=os.path.join(dir_path, theme),
             menu_idname='USERPREF_MT_interface_theme_presets')
     
     theme: bpy.props.EnumProperty(items=[
@@ -1331,199 +1501,7 @@ def draw_callback_px(self, context):
     blf.position(0, 55, context.area.height-70 - font_size, 0)
     blf.draw(0, f'{clean_name(context.object.name)[0]}')
 
-def register_keymaps():
-    kc = bpy.context.window_manager.keyconfigs
-    areas = 'Window', 'Text', 'Object Mode', '3D View'
-
-    if not all(i in kc.active.keymaps for i in areas):
-        bpy.app.timers.register(register_keymaps, first_interval=0.1)
-    else:
-        # can now proceed with checking default kmis
-        wm = bpy.context.window_manager
-        addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
-
-        dirname = os.path.dirname(__file__)
-        try:
-          if "Z-Anatomy" in bpy.context.window_manager.keyconfigs:
-            bpy.context.window_manager.keyconfigs.active = bpy.context.window_manager.keyconfigs["Z-Anatomy"]
-          else:
-            bpy.ops.preferences.keyconfig_import(filepath=os.path.join(dirname, "Z-Anatomy.py"), filter_folder=True, filter_text=True, filter_python=True, keep_original=True)
-            bpy.context.window_manager.keyconfigs.active = bpy.context.window_manager.keyconfigs["Z-Anatomy"]
-          
-
-          ###########
-          # H / SHIFT+H / CTRL+SHIFT+H
-          ###########
-          km, kmis =  get_user_keymap_item('Object Mode', 'object.hide_view_set', multiple_entries=True)
-          for default_kmi in kmis:
-              addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_wrapper.bl_idname, default_kmi.type, default_kmi.value)
-              addon_kmi.map_type = default_kmi.map_type
-              if hasattr(addon_kmi, 'repeat'):
-                  addon_kmi.repeat = default_kmi.repeat
-              addon_kmi.any = default_kmi.any
-              addon_kmi.shift = default_kmi.shift
-              addon_kmi.ctrl = default_kmi.ctrl
-              addon_kmi.alt = default_kmi.alt
-              addon_kmi.oskey = default_kmi.oskey
-              addon_kmi.key_modifier = default_kmi.key_modifier
-              
-              # addon_kmi.properties.unselected = default_kmi.properties.unselected
-              for prop in default_kmi.properties.__dir__():
-                  if not (prop.startswith('_') or prop in {'bl_rna', 'rna_type'}):
-                      setattr(addon_kmi.properties, prop, getattr(default_kmi.properties, prop))
-              
-              addon_kmi.properties.unselected_in_layer = False
-
-              addon_keymaps.append((addon_km, addon_kmi))
-          
-          # CTRL+SHIFT+H for hide unselected from active object's layer (main collection)
-          addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_wrapper.bl_idname, kmis[0].type, kmis[0].value)
-          addon_kmi.map_type = "KEYBOARD"
-          if hasattr(addon_kmi, 'repeat'):
-              addon_kmi.repeat = False
-          addon_kmi.any = False
-          addon_kmi.shift = True
-          addon_kmi.ctrl = True
-          addon_kmi.alt = False
-          addon_kmi.oskey = False
-          addon_kmi.key_modifier = "NONE"
-          addon_kmi.properties.unselected = True
-          addon_kmi.properties.unselected_in_layer = True
-          addon_keymaps.append((addon_km, addon_kmi))
-          
-          ###########
-          # ALT+H
-          ###########
-
-          km, kmis =  get_user_keymap_item('Object Mode', 'object.hide_view_clear', multiple_entries=True)
-          for default_kmi in kmis:
-              addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_view_clear_wrapper.bl_idname, default_kmi.type, default_kmi.value)
-              addon_kmi.map_type = default_kmi.map_type
-              if hasattr(addon_kmi, 'repeat'):
-                  addon_kmi.repeat = default_kmi.repeat
-              addon_kmi.any = default_kmi.any
-              addon_kmi.shift = default_kmi.shift
-              addon_kmi.ctrl = default_kmi.ctrl
-              addon_kmi.alt = default_kmi.alt
-              addon_kmi.oskey = default_kmi.oskey
-              addon_kmi.key_modifier = default_kmi.key_modifier
-              
-              for prop in default_kmi.properties.__dir__():
-                  if not (prop.startswith('_') or prop in {'bl_rna', 'rna_type'}):
-                      setattr(addon_kmi.properties, prop, getattr(default_kmi.properties, prop))
-
-              addon_kmi.properties.active_layer = False
-
-
-              addon_keymaps.append((addon_km, addon_kmi))
-
-          ###########
-          # CTRL+SHIFT+ALT+H
-          ###########
-          addon_kmi = addon_km.keymap_items.new(OBJECT_OT_hide_view_clear_wrapper.bl_idname, default_kmi.type, default_kmi.value)
-          addon_kmi.map_type = "KEYBOARD"
-          if hasattr(addon_kmi, 'repeat'):
-              addon_kmi.repeat = False
-          addon_kmi.any = False
-          addon_kmi.shift = True
-          addon_kmi.ctrl = False
-          addon_kmi.alt = True
-          addon_kmi.oskey = False
-          addon_kmi.key_modifier = "NONE"
-          addon_kmi.properties.active_layer = True
-          addon_keymaps.append((addon_km, addon_kmi))
-
-
-          
-          ###########
-          # Local view with lights
-          ###########
-          km, kmis =  get_user_keymap_item('3D View', 'view3d.localview', multiple_entries=True)
-          for default_kmi in kmis:
-              addon_kmi = addon_km.keymap_items.new(OBJECT_OT_local_view_wrapper.bl_idname, default_kmi.type, default_kmi.value)
-              addon_kmi.map_type = default_kmi.map_type
-              addon_kmi.repeat = default_kmi.repeat
-              addon_kmi.any = default_kmi.any
-              addon_kmi.shift = default_kmi.shift
-              addon_kmi.ctrl = default_kmi.ctrl
-              addon_kmi.alt = default_kmi.alt
-              addon_kmi.oskey = default_kmi.oskey
-              addon_kmi.key_modifier = default_kmi.key_modifier
-              
-              for prop in default_kmi.properties.__dir__():
-                  if not (prop.startswith('_') or prop in {'bl_rna', 'rna_type'}):
-                      setattr(addon_kmi.properties, prop, getattr(default_kmi.properties, prop))
-
-              addon_keymaps.append((addon_km, addon_kmi))
-
-
-
-          ###########
-          # Add Label
-          ###########
-          addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
-          kmi = addon_km.keymap_items.new(OBJECT_OT_make_label.bl_idname, 'FIVE', 'PRESS', shift=True, ctrl=True, alt=False)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-
-          addon_km = wm.keyconfigs.addon.keymaps.new(name='Mesh', space_type='EMPTY')
-          kmi = addon_km.keymap_items.new(OBJECT_OT_make_label.bl_idname, 'FIVE', 'PRESS', shift=True, ctrl=True, alt=False)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-          ###########
-          # Label transform to delta
-          ###########
-          addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
-          kmi = addon_km.keymap_items.new(OBJECT_OT_label_delta.bl_idname, 'FIVE', 'PRESS', shift=True, ctrl=True, alt=True)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-          ###########
-          # Change Label
-          ###########
-          addon_km = wm.keyconfigs.addon.keymaps.new(name='Object Mode', space_type='EMPTY')
-          kmi = addon_km.keymap_items.new(OBJECT_OT_change_label_wrapper.bl_idname, 'F2', 'PRESS', shift=False, ctrl=False, alt=False)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-
-          
-
-          ###########
-          # Download Wiki Texts
-          ###########
-          kmi = addon_km.keymap_items.new(TEXT_OT_wiki_download.bl_idname, 'ZERO', 'PRESS', shift=True, ctrl=True, alt=False)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-          
-          ###########
-          # Key Color
-          ###########
-          kmi = addon_km.keymap_items.new(OBJECT_OT_key_color.bl_idname, 'Z', 'PRESS', shift=True, ctrl=False, alt=True)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-
-          ###########
-          # Select Hierarchy
-          ###########
-          kmi = addon_km.keymap_items.new(OBJECT_OT_select_parent_children.bl_idname, 'DOWN_ARROW', 'PRESS', shift=False, ctrl=False, alt=False)     
-          kmi.active = True
-          addon_keymaps.append((km, kmi))
-        except Exception as e:
-            print("Exception during keystroke registering... Trying again.", e)
-            bpy.app.timers.register(register_keymaps, first_interval=0.1)
-
-# def register():
-  # bpy.app.handlers.load_factory_preferences_post.append(load_handler_for_startup)
-  # bpy.app.handlers.load_factory_startup_post.append(load_handler_for_startup)
-
-# def unregister():
-#     print("Unregistering to Change Defaults")
-#     bpy.app.handlers.load_factory_preferences_post.remove(load_handler_for_startup)
-#     bpy.app.handlers.load_factory_startup_post.remove(load_handler_for_startup)
-
-
 def register():
-    print("Registering to Change Defaults 3")
-    register_keymaps()
     z_anatomy_load_post()
     bpy.app.handlers.load_post.append(z_anatomy_load_post)
     for c in classes:
@@ -1537,13 +1515,14 @@ def register():
 
 
 def unregister():
-    print("Unregistering app template")
     for c in classes:
         bpy.utils.unregister_class(c)
     remove_shortkeys()
 
     bpy.app.handlers.load_post.remove(z_anatomy_load_post)
+
     bpy.msgbus.clear_by_owner(owner)
+
     bpy.types.SpaceView3D.draw_handler_remove(font_info["handler"], 'WINDOW')
 
 
